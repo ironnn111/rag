@@ -1,0 +1,5 @@
+{
+  "question": "这个 RAG 系统为什么要同时使用 MySQL 和 Milvus？",
+  "topK": 5,
+  "similarityThreshold": 0.6
+}

@@ -1,0 +1,42 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Element Plus 侧边栏菜单覆盖 */
+.el-menu-item {
+  font-size: 14px;
+}
+
+.el-menu-item.is-active {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* 卡片样式 */
+.el-card {
+  border-radius: 8px;
+  border: 1px solid #e4e7ed;
+}
+
+.el-card__header {
+  padding: 14px 20px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.el-card__body {
+  padding: 20px;
+}
+
+/* 空状态 */
+.el-empty__description {
+  color: #c0c4cc;
+}

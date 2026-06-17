@@ -1,0 +1,4 @@
+{
+  "title": "知识库文档生命周期管理",
+  "content": "RAG 系统的文档管理遵循入库、检索、维护的完整生命周期。文档入库时，通过 POST /api/documents 接口提交原始文档，系统先将其标题和全文保存到 MySQL 的 knowledge_documents 表中并获取自增主键，然后按照配置的切块策略将内容拆分为多个片段，每个片段带上文档 ID、标题和切块序号作为元数据写入 Milvus 向量库。MySQL 中保存了原始文档的完整内容和切块数量，Milvus 中只保存切块后的文本向量和元数据，不保留原始全文。问答检索时，通过 POST /api/rag/ask 接口提交问题，系统在 Milvus 中执行相似度检索，topK 控制返回的片段数量，similarityThreshold 控制最低相似度门槛。检索结果按分数降序排列，记录到 rag_retrieval_results 表中。模型调用日志通过 POST /api/rag/questions/{id} 接口可以回溯查询，包括完整的 prompt 内容和 token 消耗明细。文档的生命周期还包括定期评估检索效果、根据问答反馈优化切块参数，以及在业务变更时更新或淘汰过时的知识文档。"
+}

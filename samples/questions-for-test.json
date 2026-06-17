@@ -1,0 +1,42 @@
+[
+  {
+    "description": "测试 MySQL 和 Milvus 的分工原理",
+    "request": {
+      "question": "RAG 系统为什么要同时使用 MySQL 和 Milvus？",
+      "topK": 5,
+      "similarityThreshold": 0.6
+    }
+  },
+  {
+    "description": "测试 token 追踪机制",
+    "request": {
+      "question": "系统如何统计和记录每次大模型调用的 token 消耗？",
+      "topK": 5,
+      "similarityThreshold": 0.6
+    }
+  },
+  {
+    "description": "测试切块策略",
+    "request": {
+      "question": "文档切块的 chunkSize 和 overlap 应该如何配置？",
+      "topK": 5,
+      "similarityThreshold": 0.6
+    }
+  },
+  {
+    "description": "测试系统边界处理（上下文不足场景）",
+    "request": {
+      "question": "如果检索到的上下文不足以回答问题，系统会如何处理？",
+      "topK": 3,
+      "similarityThreshold": 0.6
+    }
+  },
+  {
+    "description": "测试文档生命周期",
+    "request": {
+      "question": "文档从入库到被检索的完整流程是怎样的？",
+      "topK": 5,
+      "similarityThreshold": 0.6
+    }
+  }
+]
