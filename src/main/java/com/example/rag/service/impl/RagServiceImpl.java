@@ -14,6 +14,7 @@ import com.example.rag.mapper.TLlmCallLogMapper;
 import com.example.rag.mapper.TRagQuestionMapper;
 import com.example.rag.mapper.TRagRetrievalResultMapper;
 import com.example.rag.service.RagService;
+import com.example.rag.service.RerankerClient;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -30,12 +31,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
-/**
- * RAG 问答服务实现。
- *
- * <p>完整流程：向量检索相关文档片段，组装 Prompt，调用聊天模型，
- * 最后把问题、答案、检索结果和 token 使用情况写入 MySQL。</p>
- */
 @Service
 public class RagServiceImpl implements RagService {
 
@@ -64,70 +59,23 @@ public class RagServiceImpl implements RagService {
     @Autowired
     private RagProperties properties;
 
+    @Autowired
+    private RerankerClient rerankerClient;
+
     @Override
     @Transactional
     public AskResponse ask(AskRequest request) {
-        int topK = request.topK() == null ? properties.defaultTopK() : request.topK();
-        double threshold = request.similarityThreshold() == null
-                ? properties.defaultSimilarityThreshold()
-                : request.similarityThreshold();
+        int topK = request.getTopK() == null ? properties.getDefaultTopK() : request.getTopK();
+        double threshold = request.getSimilarityThreshold() == null
+                ? properties.getDefaultSimilarityThreshold()
+                : request.getSimilarityThreshold();
 
-        // 先使用用户问题在 Milvus 中检索候选上下文。
-        List<Document> documents = vectorStore.similaritySearch(SearchRequest.builder()
-                .query(request.question())
-                .topK(topK)
-                .similarityThreshold(threshold)
-                .build());
+        List<Document> documents = retrieve(request.getQuestion(), topK, threshold);
+        LlmResult llmResult = callLlm(request.getQuestion(), documents);
 
-        // 将检索结果作为上下文拼进用户 Prompt，限制模型只基于知识库回答。
-        String context = buildContext(documents);
-        String userPrompt = """
-                【用户问题】
-                %s
-
-                【检索上下文】
-                %s
-                """.formatted(request.question(), context);
-
-        // ChatClient 使用 application.yml 中配置的 DeepSeek/OpenAI-compatible 参数。
-        ChatResponse chatResponse = chatClientBuilder.build().prompt()
-                .system(SYSTEM_PROMPT)
-                .user(userPrompt)
-                .call()
-                .chatResponse();
-
-        String answer = chatResponse.getResult().getOutput().getText();
-        Usage usage = chatResponse.getMetadata().getUsage();
-
-        // 问题、检索结果、模型调用日志分别落表，方便后续排查和成本统计。
-        TRagQuestion question = new TRagQuestion();
-        question.setQuestion(request.question());
-        question.setAnswer(answer);
-        question.setTopK(topK);
-        question.setSimilarityThreshold(threshold);
-        question.setCreatedAt(Instant.now());
-        questionMapper.insert(question);
-
-        List<RetrievalHitResponse> hits = new ArrayList<>();
-        for (int i = 0; i < documents.size(); i++) {
-            Document document = documents.get(i);
-            TRagRetrievalResult result = toRetrievalResult(question.getId(), i + 1, document);
-            retrievalResultMapper.insert(result);
-            question.getRetrievalResults().add(result);
-            hits.add(toRetrievalHit(result));
-        }
-
-        TLlmCallLog callLog = new TLlmCallLog();
-        callLog.setQuestionId(question.getId());
-        callLog.setModel(modelName(chatResponse));
-        callLog.setPrompt(SYSTEM_PROMPT + "\n\n" + userPrompt);
-        callLog.setAnswer(answer);
-        callLog.setInputTokens(promptTokens(usage));
-        callLog.setOutputTokens(completionTokens(usage));
-        callLog.setTotalTokens(totalTokens(usage));
-        callLog.setCreatedAt(Instant.now());
-        question.setCallLog(callLog);
-        callLogMapper.insert(callLog);
+        TRagQuestion question = persistQuestion(request, topK, threshold, llmResult);
+        List<RetrievalHitResponse> hits = persistRetrievalResults(question.getId(), documents);
+        TLlmCallLog callLog = persistCallLog(question.getId(), llmResult);
 
         return new AskResponse(
                 question.getId(),
@@ -138,10 +86,89 @@ public class RagServiceImpl implements RagService {
         );
     }
 
+    private record LlmResult(ChatResponse chatResponse, String prompt) {}
+
+    private List<Document> retrieve(String question, int topK, double threshold) {
+        int coarseTopK = topK * 3;
+        List<Document> coarseDocs = vectorStore.similaritySearch(SearchRequest.builder()
+                .query(question)
+                .topK(coarseTopK)
+                .similarityThreshold(threshold)
+                .build());
+
+        List<String> rerankedTexts = rerankerClient.rerank(
+                question,
+                coarseDocs.stream().map(Document::getText).toList(),
+                topK);
+
+        return coarseDocs.stream()
+                .filter(d -> rerankedTexts.contains(d.getText()))
+                .limit(topK)
+                .toList();
+    }
+
+    private LlmResult callLlm(String question, List<Document> documents) {
+        String context = buildContext(documents);
+        String userPrompt = """
+                【用户问题】
+                %s
+
+                【检索上下文】
+                %s
+                """.formatted(question, context);
+
+        ChatResponse chatResponse = chatClientBuilder.build().prompt()
+                .system(SYSTEM_PROMPT)
+                .user(userPrompt)
+                .call()
+                .chatResponse();
+
+        return new LlmResult(chatResponse, SYSTEM_PROMPT + "\n\n" + userPrompt);
+    }
+
+    private TRagQuestion persistQuestion(AskRequest request, int topK, double threshold, LlmResult llmResult) {
+        TRagQuestion question = new TRagQuestion();
+        question.setQuestion(request.getQuestion());
+        question.setAnswer(llmResult.chatResponse().getResult().getOutput().getText());
+        question.setTopK(topK);
+        question.setSimilarityThreshold(threshold);
+        question.setCreatedAt(Instant.now());
+        questionMapper.insert(question);
+        return question;
+    }
+
+    private List<RetrievalHitResponse> persistRetrievalResults(Long questionId, List<Document> documents) {
+        List<RetrievalHitResponse> hits = new ArrayList<>();
+        for (int i = 0; i < documents.size(); i++) {
+            Document document = documents.get(i);
+            TRagRetrievalResult result = toRetrievalResult(questionId, i + 1, document);
+            retrievalResultMapper.insert(result);
+            hits.add(toRetrievalHit(result));
+        }
+        return hits;
+    }
+
+    private TLlmCallLog persistCallLog(Long questionId, LlmResult llmResult) {
+        ChatResponse chatResponse = llmResult.chatResponse();
+        String answer = chatResponse.getResult().getOutput().getText();
+        Usage usage = chatResponse.getMetadata().getUsage();
+
+        TLlmCallLog callLog = new TLlmCallLog();
+        callLog.setQuestionId(questionId);
+        callLog.setModel(modelName(chatResponse));
+        callLog.setPrompt(llmResult.prompt());
+        callLog.setAnswer(answer);
+        callLog.setInputTokens(promptTokens(usage));
+        callLog.setOutputTokens(completionTokens(usage));
+        callLog.setTotalTokens(totalTokens(usage));
+        callLog.setCreatedAt(Instant.now());
+        callLogMapper.insert(callLog);
+        return callLog;
+    }
+
     @Override
     @Transactional(readOnly = true)
     public QuestionLogResponse getQuestionLog(Long questionId) {
-        // 日志查询聚合问题主表、LLM 调用日志和检索命中明细。
         TRagQuestion question = questionMapper.selectById(questionId);
         if (question == null) {
             throw new IllegalArgumentException("Question log not found: " + questionId);
@@ -173,9 +200,6 @@ public class RagServiceImpl implements RagService {
         );
     }
 
-    /**
-     * 把向量检索命中的文档片段组织为模型可读的上下文文本。
-     */
     private String buildContext(List<Document> documents) {
         if (documents.isEmpty()) {
             return "无匹配资料。";
@@ -195,9 +219,6 @@ public class RagServiceImpl implements RagService {
         return builder.toString();
     }
 
-    /**
-     * 将 Spring AI 返回的向量文档转换为检索结果表记录。
-     */
     private TRagRetrievalResult toRetrievalResult(Long questionId, int rank, Document document) {
         Map<String, Object> metadata = document.getMetadata();
         TRagRetrievalResult result = new TRagRetrievalResult();
