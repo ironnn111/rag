@@ -6,17 +6,20 @@
 
 本项目是一个全栈 RAG 系统，适用于学习和演示 RAG 的核心流程与能力：
 
-- **文档管理**：支持文本和 Word 文件上传，自动向量化入库
-- **RAG 问答**：基于向量检索的智能问答，回答结果可追溯
+- **文档管理**：支持文本、Word、PDF 文件上传，自动向量化入库
+- **RAG 问答**：向量粗检索 + Reranker 精排 + LLM 生成，回答结果可追溯
 - **检索可视化**：展示 TopK 命中片段及相似度评分
 - **Token 统计**：记录每次调用的输入 / 输出 / 总 Token 用量
 - **调用日志**：完整记录 prompt、模型、时间戳等审计信息
+- **质量评估**：LLM-as-Judge 和 RAGAS 双评估体系，衡量答案忠实度和相关性
 
 **RAG 核心流程：**
 
 ```
-文档上传 → 智能切块 → Embedding 向量化 → 写入向量库 → 用户提问 → 向量检索
-→ 召回 TopK 片段 → 拼接 Prompt → 调用大模型 → 返回 AI 回答 → 日志落库 + Token 统计
+文档上传 → 智能切块 → Embedding 向量化 → 写入向量库 + 切块记录落库
+→ 用户提问 → 向量粗检索(topK×3) → Reranker 精排(topK)
+→ 拼接 Prompt → 调用 LLM → 返回答案 → 日志落库 + Token 统计
+→ LLM-as-Judge / RAGAS 评估
 ```
 
 ## 架构说明
@@ -34,6 +37,7 @@ graph TB
         B3[检索结果展示]
         B4[Token 统计]
         B5[调用日志]
+        B6[质量评估]
     end
 
     subgraph API 网关层
@@ -48,6 +52,9 @@ graph TB
         D4[RagService<br/>RAG 编排服务]
         D5[DocumentChunker<br/>文本切块器]
         D6[WordDocumentParser<br/>Word 解析器]
+        D7[EvaluationController<br/>评估接口]
+        D8[EvaluationService<br/>评估服务]
+        D9[RAGAS Python 脚本]
     end
 
     subgraph 存储层
@@ -66,12 +73,18 @@ graph TB
     B --> B3
     B --> B4
     B --> B5
+    B --> B6
     B -->|Axios| C
     C -->|HTTP| D
     D --> D1
     D --> D2
+    D --> D7
     D1 --> D3
     D2 --> D4
+    D7 --> D8
+    D8 -->|调用大模型| G
+    D8 -->|启动脚本| D9
+    D9 -->|读写| E
     D3 --> D5
     D3 --> D6
     D3 -->|读写| E
@@ -150,6 +163,9 @@ sequenceDiagram
 | **调用日志** | 每次问答完整记录 prompt、答案、模型、Token 用量到 MySQL |
 | **Token 统计** | 自动解析 API 返回的 `usage` 字段，落库输入/输出/总 Token |
 | **日志查询** | 支持按 questionId 回溯任意一次问答的完整调用链路 |
+| **LLM-as-Judge 评估** | Java 原生调用 LLM 对答案忠实度和相关性打分（1-5 分） |
+| **RAGAS 评估** | Python 脚本集成 RAGAS 框架，四维指标精细评估 |
+| **文档切块追踪** | `document_chunks` 表记录每个切块的位置、页码、章节标题 |
 
 ### 前端功能模块
 
@@ -162,6 +178,7 @@ sequenceDiagram
 | **检索结果表格** | 命中片段排名、相似度评分（颜色标记）、来源文档、片段内容 |
 | **Token 统计面板** | 输入/输出/总 Token 数字面板可视化 |
 | **调用日志面板** | 问题 ID、模型名称、调用时间、完整 Prompt 展示 |
+| **质量评估页面** | 问题列表 + LLM/RAGAS 双按钮评估 + 评分卡片（分数 + 理由） |
 | **统一错误处理** | Axios 拦截器统一弹窗提示，用户体验友好 |
 
 ## 项目目录结构
@@ -175,7 +192,8 @@ rag/
 │   │   └── RagProperties.java
 │   ├── controller/                      # REST 控制器
 │   │   ├── DocumentController.java      # 文档管理接口
-│   │   └── RagController.java           # RAG 问答接口
+│   │   ├── RagController.java           # RAG 问答接口
+│   │   └── EvaluationController.java    # 质量评估接口
 │   ├── dto/                             # 请求/响应 DTO
 │   │   ├── AskRequest.java
 │   │   ├── AskResponse.java
@@ -184,25 +202,36 @@ rag/
 │   │   ├── IngestDocumentResponse.java
 │   │   ├── QuestionLogResponse.java
 │   │   ├── RetrievalHitResponse.java
-│   │   └── TokenUsageResponse.java
+│   │   ├── TokenUsageResponse.java
+│   │   ├── EvalScoreResponse.java
+│   │   └── QuestionSummaryResponse.java
 │   ├── entity/                          # 数据表实体
 │   │   ├── TKnowledgeDocument.java
+│   │   ├── TDocumentChunk.java
 │   │   ├── TLlmCallLog.java
+│   │   ├── TEvalScore.java
 │   │   ├── TRagQuestion.java
 │   │   └── TRagRetrievalResult.java
 │   ├── mapper/                          # MyBatis-Plus Mapper
 │   │   ├── TKnowledgeDocumentMapper.java
+│   │   ├── TDocumentChunkMapper.java
 │   │   ├── TLlmCallLogMapper.java
+│   │   ├── TEvalScoreMapper.java
 │   │   ├── TRagQuestionMapper.java
 │   │   └── TRagRetrievalResultMapper.java
 │   └── service/                         # 业务服务层
 │       ├── DocumentChunker.java         # 文本智能切块器
 │       ├── WordDocumentParser.java      # Word 文档解析器
+│       ├── PdfDocumentParser.java       # PDF 文档解析器
+│       ├── RerankerClient.java          # Reranker 精排客户端
+│       ├── ChunkResult.java             # 切块元数据
 │       ├── KnowledgeDocumentService.java
 │       ├── RagService.java
+│       ├── EvaluationService.java       # 质量评估服务
 │       └── impl/
 │           ├── KnowledgeDocumentServiceImpl.java
-│           └── RagServiceImpl.java
+│           ├── RagServiceImpl.java
+│           └── EvaluationServiceImpl.java
 ├── src/main/resources/
 │   ├── application.yml                  # 应用配置
 │   └── db/schema.sql                    # 数据库 DDL
@@ -222,7 +251,8 @@ rag/
 │       ├── api/                         # API 调用层
 │       │   ├── client.ts                # Axios 实例 + 拦截器
 │       │   ├── document.ts              # 文档接口
-│       │   └── rag.ts                   # RAG 问答接口
+│       │   ├── rag.ts                   # RAG 问答接口
+│       │   └── eval.ts                  # 评估接口
 │       ├── assets/                      # 静态资源
 │       ├── components/                  # 组件
 │       │   ├── layout/                  # 布局组件
@@ -248,12 +278,16 @@ rag/
 │       │   └── global.css
 │       ├── types/                       # TypeScript 类型定义
 │       │   ├── document.ts
-│       │   └── rag.ts
+│       │   ├── rag.ts
+│       │   └── eval.ts
 │       └── views/                       # 页面视图
 │           ├── RagQAView.vue            # RAG 问答页
-│           └── DocumentManageView.vue   # 文档管理页
+│           ├── DocumentManageView.vue   # 文档管理页
+│           └── EvalView.vue             # 质量评估页
 ├── scripts/                             # 辅助脚本
 │   ├── embedding_server.py              # 本地 Embedding 服务
+│   ├── ragas_eval.py                    # RAGAS 评估脚本
+│   ├── requirements.txt                 # Python 依赖
 │   ├── start-deps.sh                    # 启动依赖服务
 │   ├── stop-deps.sh                     # 停止依赖服务
 │   ├── start-app.sh                     # 启动应用
@@ -338,6 +372,10 @@ npm run dev
 | `GET` | `/api/documents` | 查询所有文档列表 |
 | `POST` | `/api/rag/ask` | 执行 RAG 问答 |
 | `GET` | `/api/rag/questions/{id}` | 查询问答调用日志 |
+| `GET` | `/api/eval/questions` | 列出可评估的问题 |
+| `POST` | `/api/eval/{questionId}` | LLM-as-Judge 评估 |
+| `POST` | `/api/eval/{questionId}/ragas` | RAGAS 评估 |
+| `GET` | `/api/eval/{questionId}` | 查询评估分数 |
 
 ### 问答请求示例
 
@@ -375,6 +413,67 @@ POST /api/rag/ask
 }
 ```
 
+## 问答质量评估
+
+系统提供 **LLM-as-Judge** 和 **RAGAS** 两套评估方式，从不同维度衡量 RAG 答案质量，结果写入同一张 `eval_scores` 表。
+
+### 评估维度对比
+
+| 维度 | 含义 | LLM-as-Judge | RAGAS |
+|------|------|:---:|:---:|
+| Faithfulness / 忠实度 | 答案是否基于检索上下文，有没有编造 | ✓ | ✓ |
+| Answer Relevancy / 相关性 | 答案是否切题，有效回应了用户问题 | ✓ | ✓ |
+| Context Precision / 上下文精度 | 检索结果排序是否合理 | ✗ | ✓ |
+| Context Recall / 上下文召回 | 检索是否覆盖了回答所需的全部信息 | ✗ | ✓ |
+
+### LLM-as-Judge（Java 原生）
+
+Java 直接调用 DeepSeek 打分，无需外部依赖。
+
+**原理：** 把 (用户问题 + 检索上下文 + 生成答案) 拼接成评估 prompt，让 LLM 逐条比对——检查答案的每一个说法能否在上下文中找到依据。这不是让 LLM 判断"答案对不对"，而是判断"答案跟上下文是否一致"。
+
+**局限性：**
+
+- 同一个模型既写答案又打分，存在一定偏见
+- 上下文本身不完整时，忠实的答案也可能不准确
+- 对隐含的、似是而非的编造检测能力有限
+
+### RAGAS（Python 脚本）
+
+调用 RAGAS 框架，Java 通过 `ProcessBuilder` 启动 Python 脚本，结果写回 MySQL。
+
+**原理：** 与 LLM-as-Judge 思路类似，但做了更细粒度的拆分：
+
+- **Faithfulness** — 把答案拆成若干 Claim，逐个去上下文里查是否可推导
+- **AnswerRelevancy** — 从答案反向生成问题，比较生成的问题与原始问题的语义相似度
+- **ContextPrecision** — 对每条检索结果标记相关性，检查排序是否合理
+- **ContextRecall** — 从答案中提取关键信息点，回溯检查上下文是否包含
+
+```bash
+# 安装依赖
+pip install -r scripts/requirements.txt
+
+# 命令行运行
+python scripts/ragas_eval.py --question-id 1        # 单个评估
+python scripts/ragas_eval.py --all                  # 批量评估所有未评估的问题
+python scripts/ragas_eval.py --question-id 1 --dry-run  # 预览不写库
+```
+
+**环境变量（覆盖默认值）：**
+
+```bash
+export DEEPSEEK_API_KEY=your-key
+export MYSQL_PASSWORD=Qq12345678
+```
+
+### 交叉验证
+
+两种评估方式写同一张表，结果互不覆盖。建议同时使用交叉验证：
+
+- 两个都高 → 答案质量可信
+- 一高一低 → 需要抽查
+- 两个都低 → 排查检索上下文或切块质量
+
 ## 配置说明
 
 核心配置文件：`src/main/resources/application.yml`
@@ -405,4 +504,15 @@ rag:
   default-top-k: 5              # 默认检索数量
   default-similarity-threshold: 0.6  # 默认相似度阈值
 ```
+## 数据库表
+
+| 表名 | 说明 |
+|------|------|
+| `knowledge_documents` | 原始知识文档，保存全文及切块统计 |
+| `document_chunks` | 文档切块记录，含页码、章节标题、Milvus ID |
+| `rag_questions` | RAG 问答记录，含问题和答案 |
+| `rag_retrieval_results` | 检索命中明细，含排名、分数、来源信息 |
+| `llm_call_logs` | LLM 调用日志，含完整 prompt 和 token 用量 |
+| `eval_scores` | 评估分数，含 faithfulness 和 relevancy 评分及理由 |
+
 # rag
