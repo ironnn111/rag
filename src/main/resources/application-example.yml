@@ -1,0 +1,59 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: rag
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/rag_demo?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: your-password
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+  ai:
+    openai:
+      # DeepSeek 兼容 OpenAI API。请替换为你的 API Key。
+      api-key: your-deepseek-api-key
+      base-url: https://api.deepseek.com
+      chat:
+        api-key: your-deepseek-api-key
+        base-url: https://api.deepseek.com
+        completions-path: /v1/chat/completions
+        options:
+          model: deepseek-v4-pro
+          temperature: 0.2
+      embedding:
+        # RAG 检索需要 embedding。这里可以配置 OpenAI 或其他兼容 OpenAI Embedding API 的服务。
+        api-key: not-needed
+        base-url: http://127.0.0.1:18080
+        options:
+          model: BAAI/bge-small-zh-v1.5
+    vectorstore:
+      milvus:
+        client:
+          host: 127.0.0.1
+          port: 19530
+        database-name: default
+        collection-name: rag_documents
+        # 必须和 embedding 模型输出维度一致。BAAI/bge-small-zh-v1.5 为 512 维。
+        embedding-dimension: 512
+        initialize-schema: true
+
+rag:
+  chunk-size: 800
+  chunk-overlap: 120
+  default-top-k: 5
+  default-similarity-threshold: 0.6
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: auto
+
+logging:
+  level:
+    com.example.rag: INFO

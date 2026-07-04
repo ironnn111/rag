@@ -1,0 +1,8 @@
+target/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+volumes/
+scripts/start-local-user.sh
+src/main/resources/application.yml
