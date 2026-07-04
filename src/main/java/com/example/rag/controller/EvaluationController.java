@@ -41,6 +41,14 @@ public class EvaluationController {
     }
 
     /**
+     * 使用 RAGAS 对指定问题执行评估。
+     */
+    @PostMapping("/{questionId}/ragas")
+    public EvalScoreResponse evaluateRagas(@PathVariable Long questionId) {
+        return evaluationService.evaluateRagas(questionId);
+    }
+
+    /**
      * 查询历史评估结果。
      */
     @GetMapping("/{questionId}")

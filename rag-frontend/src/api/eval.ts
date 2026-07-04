@@ -9,6 +9,10 @@ export function evaluateQuestion(questionId: number): Promise<EvalScoreResponse>
   return client.post(`/api/eval/${questionId}`)
 }
 
+export function evaluateRagas(questionId: number): Promise<EvalScoreResponse> {
+  return client.post(`/api/eval/${questionId}/ragas`)
+}
+
 export function getEvalScore(questionId: number): Promise<EvalScoreResponse | null> {
   return client.get(`/api/eval/${questionId}`)
 }

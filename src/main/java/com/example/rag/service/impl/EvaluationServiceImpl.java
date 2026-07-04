@@ -20,9 +20,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.file.Path;
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class EvaluationServiceImpl implements EvaluationService {
@@ -139,6 +143,58 @@ public class EvaluationServiceImpl implements EvaluationService {
         evalScoreMapper.insert(evalScore);
 
         return toResponse(evalScore);
+    }
+
+    @Override
+    @Transactional
+    public EvalScoreResponse evaluateRagas(Long questionId) {
+        TRagQuestion question = questionMapper.selectById(questionId);
+        if (question == null) {
+            throw new IllegalArgumentException("问题不存在: " + questionId);
+        }
+        if (question.getAnswer() == null || question.getAnswer().isEmpty()) {
+            throw new IllegalArgumentException("该问题尚未生成答案");
+        }
+
+        String projectDir = System.getProperty("user.dir");
+        Path scriptPath = Path.of(projectDir, "scripts", "ragas_eval.py");
+        if (!scriptPath.toFile().exists()) {
+            throw new RuntimeException("RAGAS 脚本不存在: " + scriptPath);
+        }
+
+        ProcessBuilder pb = new ProcessBuilder(
+                "python3", scriptPath.toString(), "--question-id", questionId.toString());
+        pb.directory(Path.of(projectDir).toFile());
+        pb.redirectErrorStream(true);
+
+        try {
+            Process process = pb.start();
+            StringBuilder output = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
+            }
+            boolean finished = process.waitFor(120, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                throw new RuntimeException("RAGAS 评估超时（120 秒）");
+            }
+            int exitCode = process.exitValue();
+            if (exitCode != 0) {
+                throw new RuntimeException("RAGAS 评估失败，退出码 " + exitCode
+                        + "\n输出:\n" + output);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("无法执行 RAGAS 脚本: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("RAGAS 评估被中断", e);
+        }
+
+        return getEvalScore(questionId);
     }
 
     @Override

@@ -26,4 +26,9 @@ public interface EvaluationService {
      * 查询某次问题的历史评估记录。
      */
     EvalScoreResponse getEvalScore(Long questionId);
+
+    /**
+     * 使用 RAGAS Python 脚本对指定问题执行评估。
+     */
+    EvalScoreResponse evaluateRagas(Long questionId);
 }

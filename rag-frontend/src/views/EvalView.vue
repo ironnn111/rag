@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { listEvalQuestions, evaluateQuestion, getEvalScore } from '@/api/eval'
+import { listEvalQuestions, evaluateQuestion, evaluateRagas, getEvalScore } from '@/api/eval'
 import type { QuestionSummary, EvalScoreResponse } from '@/types/eval'
 import { ElMessage } from 'element-plus'
 
 const questions = ref<QuestionSummary[]>([])
 const loading = ref(false)
 const evaluatingId = ref<number | null>(null)
+const ragasEvaluatingId = ref<number | null>(null)
 const evalResults = ref<Map<number, EvalScoreResponse | null>>(new Map())
 
 async function loadQuestions() {
@@ -36,6 +37,19 @@ async function runEvaluate(questionId: number) {
     ElMessage.error(e?.message || '评估失败')
   } finally {
     evaluatingId.value = null
+  }
+}
+
+async function runRagas(questionId: number) {
+  ragasEvaluatingId.value = questionId
+  try {
+    const result = await evaluateRagas(questionId)
+    evalResults.value.set(questionId, result)
+    ElMessage.success('RAGAS 评估完成')
+  } catch (e: any) {
+    ElMessage.error(e?.message || 'RAGAS 评估失败')
+  } finally {
+    ragasEvaluatingId.value = null
   }
 }
 
@@ -75,16 +89,26 @@ onMounted(loadQuestions)
           {{ new Date(row.createdAt).toLocaleString('zh-CN') }}
         </template>
       </el-table-column>
-      <el-table-column label="评估操作" width="120" fixed="right">
+      <el-table-column label="评估操作" width="200" fixed="right">
         <template #default="{ row }">
-          <el-button
-            type="primary"
-            size="small"
-            :loading="evaluatingId === row.questionId"
-            @click="runEvaluate(row.questionId)"
-          >
-            {{ evalResults.get(row.questionId) ? '重新评估' : '开始评估' }}
-          </el-button>
+          <div class="eval-actions">
+            <el-button
+              type="primary"
+              size="small"
+              :loading="evaluatingId === row.questionId"
+              @click="runEvaluate(row.questionId)"
+            >
+              LLM 评估
+            </el-button>
+            <el-button
+              type="success"
+              size="small"
+              :loading="ragasEvaluatingId === row.questionId"
+              @click="runRagas(row.questionId)"
+            >
+              RAGAS
+            </el-button>
+          </div>
         </template>
       </el-table-column>
       <el-table-column type="expand">
@@ -134,6 +158,11 @@ onMounted(loadQuestions)
 </template>
 
 <style scoped>
+.eval-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .eval-page {
   max-width: 1000px;
   margin: 0 auto;
