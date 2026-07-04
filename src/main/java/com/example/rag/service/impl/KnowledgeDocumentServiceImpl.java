@@ -5,8 +5,10 @@ import com.example.rag.dto.IngestDocumentRequest;
 import com.example.rag.dto.IngestDocumentResponse;
 import com.example.rag.entity.TKnowledgeDocument;
 import com.example.rag.mapper.TKnowledgeDocumentMapper;
+import com.example.rag.service.ChunkResult;
 import com.example.rag.service.DocumentChunker;
 import com.example.rag.service.KnowledgeDocumentService;
+import com.example.rag.service.PdfDocumentParser;
 import com.example.rag.service.WordDocumentParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -22,14 +24,10 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 知识文档入库服务实现。
- *
- * <p>职责包括保存原始文档、切分文档、构造向量文档，并写入 Milvus。</p>
- */
 @Service
 public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
 
@@ -45,12 +43,16 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     @Autowired
     private WordDocumentParser wordDocumentParser;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    @Autowired
+    private PdfDocumentParser pdfDocumentParser;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     @Transactional
     public IngestDocumentResponse ingest(IngestDocumentRequest request) {
-        return doIngest(request.title(), request.content());
+        return doIngest(request.getTitle(), request.getContent());
     }
 
     @Override
@@ -58,14 +60,18 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     public IngestDocumentResponse ingest(MultipartFile file) {
         String originalFilename = file.getOriginalFilename();
         String title = originalFilename != null ? stripExtension(originalFilename) : "未命名文档";
-        String content;
+        String lowerName = originalFilename != null ? originalFilename.toLowerCase() : "";
+
         try {
-            content = wordDocumentParser.extractText(file.getInputStream(),
+            if (lowerName.endsWith(".pdf")) {
+                return doIngestPdf(title, file);
+            }
+            String content = wordDocumentParser.extractText(file.getInputStream(),
                     originalFilename != null ? originalFilename : "");
+            return doIngest(title, content);
         } catch (IOException e) {
-            throw new RuntimeException("无法解析 Word 文档: " + e.getMessage(), e);
+            throw new RuntimeException("无法解析文档: " + e.getMessage(), e);
         }
-        return doIngest(title, content);
     }
 
     private IngestDocumentResponse doIngest(String title, String content) {
@@ -88,7 +94,6 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         }
         vectorStore.add(vectorDocuments);
 
-        // 收集 Spring AI 自动生成的 Milvus 文档 ID，后续删除时需要用到
         List<String> milvusIds = vectorDocuments.stream()
                 .map(Document::getId)
                 .toList();
@@ -96,6 +101,40 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         documentMapper.updateById(document);
 
         return new IngestDocumentResponse(document.getId(), document.getTitle(), chunks.size());
+    }
+
+    private IngestDocumentResponse doIngestPdf(String title, MultipartFile file) throws IOException {
+        PdfDocumentParser.PdfParseResult parseResult = pdfDocumentParser.parse(file.getInputStream());
+
+        String cleanedText = pdfDocumentParser.mergeBrokenLines(parseResult.getFullText());
+
+        List<ChunkResult> chunkResults = chunker.chunkWithMetadata(
+                cleanedText, title, parseResult.getPages());
+
+        TKnowledgeDocument document = new TKnowledgeDocument();
+        document.setTitle(title);
+        document.setContent(cleanedText);
+        document.setChunkCount(chunkResults.size());
+        document.setCreatedAt(Instant.now());
+        documentMapper.insert(document);
+
+        List<Document> vectorDocuments = new ArrayList<>();
+        for (int i = 0; i < chunkResults.size(); i++) {
+            ChunkResult cr = chunkResults.get(i);
+            Map<String, Object> meta = new HashMap<>(cr.getMetadata());
+            meta.put("documentId", document.getId());
+            meta.put("title", document.getTitle());
+            vectorDocuments.add(new Document(cr.getText(), meta));
+        }
+        vectorStore.add(vectorDocuments);
+
+        List<String> milvusIds = vectorDocuments.stream()
+                .map(Document::getId)
+                .toList();
+        document.setMilvusIds(toJson(milvusIds));
+        documentMapper.updateById(document);
+
+        return new IngestDocumentResponse(document.getId(), document.getTitle(), chunkResults.size());
     }
 
     @Override
@@ -106,7 +145,6 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             return;
         }
 
-        // 从 Milvus 中删除该文档的所有向量
         String milvusIdsJson = document.getMilvusIds();
         if (milvusIdsJson != null && !milvusIdsJson.isEmpty()) {
             List<String> ids = fromJson(milvusIdsJson);
@@ -115,7 +153,6 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             }
         }
 
-        // 从 MySQL 中删除文档记录
         documentMapper.deleteById(documentId);
     }
 
@@ -145,7 +182,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         List<TKnowledgeDocument> docs = documentMapper.selectList(null);
         return docs.stream()
                 .map(d -> new DocumentItemResponse(d.getId(), d.getTitle(), d.getChunkCount(), d.getCreatedAt()))
-                .sorted((a, b) -> b.createdAt().compareTo(a.createdAt()))
+                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
                 .toList();
     }
 }
