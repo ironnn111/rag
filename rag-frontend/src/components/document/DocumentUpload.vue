@@ -80,20 +80,20 @@ async function handleFileChange(file: any) {
           </el-form-item>
         </el-form>
       </el-tab-pane>
-      <el-tab-pane label="Word 文件" name="file">
+      <el-tab-pane label="文件上传" name="file">
         <el-upload
           v-model:file-list="fileList"
           drag
           :limit="1"
           :auto-upload="false"
-          accept=".docx,.doc"
+          accept=".pdf,.docx,.doc"
           :http-request="handleFileChange"
           :on-change="handleFileChange"
         >
           <el-icon class="upload-icon"><UploadFilled /></el-icon>
-          <div class="upload-text">将 Word 文件拖到此处，或点击上传</div>
+          <div class="upload-text">将文件拖到此处，或点击上传</div>
           <template #tip>
-            <div class="upload-tip">支持 .docx / .doc 格式</div>
+            <div class="upload-tip">支持 PDF / .docx / .doc 格式</div>
           </template>
         </el-upload>
       </el-tab-pane>
