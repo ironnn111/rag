@@ -3,13 +3,16 @@ package com.example.rag.service.impl;
 import com.example.rag.dto.DocumentItemResponse;
 import com.example.rag.dto.IngestDocumentRequest;
 import com.example.rag.dto.IngestDocumentResponse;
+import com.example.rag.entity.TDocumentChunk;
 import com.example.rag.entity.TKnowledgeDocument;
+import com.example.rag.mapper.TDocumentChunkMapper;
 import com.example.rag.mapper.TKnowledgeDocumentMapper;
 import com.example.rag.service.ChunkResult;
 import com.example.rag.service.DocumentChunker;
 import com.example.rag.service.KnowledgeDocumentService;
 import com.example.rag.service.PdfDocumentParser;
 import com.example.rag.service.WordDocumentParser;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -48,6 +51,9 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private TDocumentChunkMapper chunkMapper;
 
     @Override
     @Transactional
@@ -94,6 +100,16 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         }
         vectorStore.add(vectorDocuments);
 
+        for (int i = 0; i < chunks.size(); i++) {
+            TDocumentChunk chunk = new TDocumentChunk();
+            chunk.setDocumentId(document.getId());
+            chunk.setChunkIndex(i);
+            chunk.setContent(chunks.get(i));
+            chunk.setMilvusId(vectorDocuments.get(i).getId());
+            chunk.setCreatedAt(Instant.now());
+            chunkMapper.insert(chunk);
+        }
+
         List<String> milvusIds = vectorDocuments.stream()
                 .map(Document::getId)
                 .toList();
@@ -128,6 +144,25 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         }
         vectorStore.add(vectorDocuments);
 
+        for (int i = 0; i < chunkResults.size(); i++) {
+            ChunkResult cr = chunkResults.get(i);
+            TDocumentChunk chunk = new TDocumentChunk();
+            chunk.setDocumentId(document.getId());
+            chunk.setChunkIndex(i);
+            chunk.setContent(cr.getText());
+            chunk.setMilvusId(vectorDocuments.get(i).getId());
+            Object pageObj = cr.getMetadata().get("page");
+            if (pageObj instanceof Number) {
+                chunk.setPage(((Number) pageObj).intValue());
+            }
+            Object sectionObj = cr.getMetadata().get("sectionTitle");
+            if (sectionObj != null) {
+                chunk.setSectionTitle(sectionObj.toString());
+            }
+            chunk.setCreatedAt(Instant.now());
+            chunkMapper.insert(chunk);
+        }
+
         List<String> milvusIds = vectorDocuments.stream()
                 .map(Document::getId)
                 .toList();
@@ -154,6 +189,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         }
 
         documentMapper.deleteById(documentId);
+        chunkMapper.delete(new LambdaQueryWrapper<TDocumentChunk>()
+                .eq(TDocumentChunk::getDocumentId, documentId));
     }
 
     private String toJson(Object obj) {

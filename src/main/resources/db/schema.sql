@@ -8,6 +8,19 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     created_at DATETIME(6) NOT NULL COMMENT '文档入库时间'
 ) COMMENT='原始知识文档表，保存用户准备的完整文档内容';
 
+-- 文档切块表：记录每个切块的位置和内容，关联文档与 Milvus 向量。
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键 ID',
+    document_id BIGINT NOT NULL COMMENT '关联 knowledge_documents.id',
+    chunk_index INT NOT NULL COMMENT '切块在文档中的序号，从 0 开始',
+    content LONGTEXT NOT NULL COMMENT '切块文本内容',
+    milvus_id VARCHAR(128) NULL COMMENT 'Milvus 中对应向量的文档 ID',
+    page INT NULL COMMENT 'PDF 文档所在页码，非 PDF 文档为空',
+    section_title VARCHAR(256) NULL COMMENT '切块所属章节标题',
+    created_at DATETIME(6) NOT NULL COMMENT '切块创建时间',
+    INDEX idx_document_chunks_doc_id (document_id)
+) COMMENT='文档切块表，记录每个切块的来源位置和向量关联';
+
 -- RAG 问题主表：记录一次用户提问和最终答案。
 CREATE TABLE IF NOT EXISTS rag_questions (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键 ID',

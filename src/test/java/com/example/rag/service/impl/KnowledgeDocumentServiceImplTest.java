@@ -3,6 +3,7 @@ package com.example.rag.service.impl;
 import com.example.rag.dto.IngestDocumentRequest;
 import com.example.rag.dto.IngestDocumentResponse;
 import com.example.rag.entity.TKnowledgeDocument;
+import com.example.rag.mapper.TDocumentChunkMapper;
 import com.example.rag.mapper.TKnowledgeDocumentMapper;
 import com.example.rag.service.DocumentChunker;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -38,6 +39,9 @@ class KnowledgeDocumentServiceImplTest {
 
     @Mock
     private VectorStore vectorStore;
+
+    @Mock
+    private TDocumentChunkMapper chunkMapper;
 
     @InjectMocks
     private KnowledgeDocumentServiceImpl service;
