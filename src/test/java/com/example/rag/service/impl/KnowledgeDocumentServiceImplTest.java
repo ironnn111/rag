@@ -5,6 +5,7 @@ import com.example.rag.dto.IngestDocumentResponse;
 import com.example.rag.entity.TKnowledgeDocument;
 import com.example.rag.mapper.TKnowledgeDocumentMapper;
 import com.example.rag.service.DocumentChunker;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -25,11 +27,6 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * KnowledgeDocumentServiceImpl 单元测试。
- *
- * <p>验证文档入库流程：保存原始文档、切块、写入向量库。</p>
- */
 @ExtendWith(MockitoExtension.class)
 class KnowledgeDocumentServiceImplTest {
 
@@ -47,6 +44,7 @@ class KnowledgeDocumentServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
         // MyBatis-Plus insert 后自动回填 ID 的行为
         doAnswer(invocation -> {
             TKnowledgeDocument entity = invocation.getArgument(0);
@@ -68,9 +66,9 @@ class KnowledgeDocumentServiceImplTest {
         IngestDocumentResponse response = service.ingest(new IngestDocumentRequest(title, content));
 
         // 验证返回值
-        assertThat(response.documentId()).isEqualTo(100L);
-        assertThat(response.title()).isEqualTo(title);
-        assertThat(response.chunkCount()).isEqualTo(2);
+        assertThat(response.getDocumentId()).isEqualTo(100L);
+        assertThat(response.getTitle()).isEqualTo(title);
+        assertThat(response.getChunkCount()).isEqualTo(2);
 
         // 验证 MySQL insert 被调用且数据正确
         ArgumentCaptor<TKnowledgeDocument> docCaptor = ArgumentCaptor.forClass(TKnowledgeDocument.class);
@@ -109,8 +107,8 @@ class KnowledgeDocumentServiceImplTest {
 
         IngestDocumentResponse response = service.ingest(new IngestDocumentRequest(title, content));
 
-        assertThat(response.chunkCount()).isEqualTo(1);
-        assertThat(response.documentId()).isEqualTo(100L);
+        assertThat(response.getChunkCount()).isEqualTo(1);
+        assertThat(response.getDocumentId()).isEqualTo(100L);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<Document>> vectorCaptor = ArgumentCaptor.forClass(List.class);
@@ -127,8 +125,8 @@ class KnowledgeDocumentServiceImplTest {
 
         IngestDocumentResponse response = service.ingest(new IngestDocumentRequest(title, content));
 
-        assertThat(response.chunkCount()).isEqualTo(0);
-        assertThat(response.documentId()).isEqualTo(100L);
+        assertThat(response.getChunkCount()).isEqualTo(0);
+        assertThat(response.getDocumentId()).isEqualTo(100L);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<Document>> vectorCaptor = ArgumentCaptor.forClass(List.class);

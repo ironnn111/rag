@@ -10,6 +10,7 @@ import com.example.rag.entity.TRagRetrievalResult;
 import com.example.rag.mapper.TLlmCallLogMapper;
 import com.example.rag.mapper.TRagQuestionMapper;
 import com.example.rag.mapper.TRagRetrievalResultMapper;
+import com.example.rag.service.RerankerClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -76,6 +77,9 @@ class RagServiceImplTest {
     @Mock
     private ChatClient.CallResponseSpec callSpec;
 
+    @Mock
+    private RerankerClient rerankerClient;
+
     private RagServiceImpl service;
     private final RagProperties properties = new RagProperties(800, 120, 5, 0.6);
 
@@ -88,6 +92,15 @@ class RagServiceImplTest {
         ReflectionTestUtils.setField(service, "vectorStore", vectorStore);
         ReflectionTestUtils.setField(service, "chatClientBuilder", chatClientBuilder);
         ReflectionTestUtils.setField(service, "properties", properties);
+        ReflectionTestUtils.setField(service, "rerankerClient", rerankerClient);
+
+        // Reranker 默认透传（精排=粗排顺序），各测试可覆盖
+        when(rerankerClient.rerank(anyString(), any(), any(Integer.class)))
+                .thenAnswer(inv -> {
+                    List<String> docs = inv.getArgument(1);
+                    int topK = inv.getArgument(2);
+                    return docs.subList(0, Math.min(topK, docs.size()));
+                });
 
         // MyBatis-Plus insert 后回填 ID
         doAnswer(inv -> {
@@ -140,15 +153,15 @@ class RagServiceImplTest {
         ArgumentCaptor<SearchRequest> searchCaptor = ArgumentCaptor.forClass(SearchRequest.class);
         verify(vectorStore).similaritySearch(searchCaptor.capture());
         SearchRequest searchRequest = searchCaptor.getValue();
-        assertThat(searchRequest.getQuery()).isEqualTo(request.question());
-        assertThat(searchRequest.getTopK()).isEqualTo(5);
+        assertThat(searchRequest.getQuery()).isEqualTo(request.getQuestion());
+        assertThat(searchRequest.getTopK()).isEqualTo(15); // topK(5) * 3 粗排
         assertThat(searchRequest.getSimilarityThreshold()).isEqualTo(0.6);
 
         // 验证 question 记录
         ArgumentCaptor<TRagQuestion> questionCaptor = ArgumentCaptor.forClass(TRagQuestion.class);
         verify(questionMapper).insert(questionCaptor.capture());
         TRagQuestion savedQuestion = questionCaptor.getValue();
-        assertThat(savedQuestion.getQuestion()).isEqualTo(request.question());
+        assertThat(savedQuestion.getQuestion()).isEqualTo(request.getQuestion());
         assertThat(savedQuestion.getAnswer()).isEqualTo("RAG 系统使用 MySQL 和 Milvus 是为了发挥各自优势。");
         assertThat(savedQuestion.getTopK()).isEqualTo(5);
         assertThat(savedQuestion.getSimilarityThreshold()).isEqualTo(0.6);
@@ -181,14 +194,14 @@ class RagServiceImplTest {
         assertThat(savedLog.getPrompt()).contains("技术选型说明");
 
         // 验证响应中的 token 信息
-        assertThat(response.tokenUsage().inputTokens()).isEqualTo(120L);
-        assertThat(response.tokenUsage().outputTokens()).isEqualTo(30L);
-        assertThat(response.tokenUsage().totalTokens()).isEqualTo(150L);
+        assertThat(response.getTokenUsage().getInputTokens()).isEqualTo(120L);
+        assertThat(response.getTokenUsage().getOutputTokens()).isEqualTo(30L);
+        assertThat(response.getTokenUsage().getTotalTokens()).isEqualTo(150L);
 
         // 验证响应中的检索结果
-        assertThat(response.retrievalResults()).hasSize(3);
-        assertThat(response.retrievalResults().get(0).rank()).isEqualTo(1);
-        assertThat(response.retrievalResults().get(0).score()).isEqualTo(0.92);
+        assertThat(response.getRetrievalResults()).hasSize(3);
+        assertThat(response.getRetrievalResults().get(0).getRank()).isEqualTo(1);
+        assertThat(response.getRetrievalResults().get(0).getScore()).isEqualTo(0.92);
     }
 
     @Test
@@ -204,7 +217,7 @@ class RagServiceImplTest {
 
         ArgumentCaptor<SearchRequest> captor = ArgumentCaptor.forClass(SearchRequest.class);
         verify(vectorStore).similaritySearch(captor.capture());
-        assertThat(captor.getValue().getTopK()).isEqualTo(10);
+        assertThat(captor.getValue().getTopK()).isEqualTo(30); // topK(10) * 3 粗排
         assertThat(captor.getValue().getSimilarityThreshold()).isEqualTo(0.8);
     }
 
@@ -217,7 +230,7 @@ class RagServiceImplTest {
         AskRequest request = new AskRequest("不存在的问题", null, null);
         AskResponse response = service.ask(request);
 
-        assertThat(response.retrievalResults()).isEmpty();
+        assertThat(response.getRetrievalResults()).isEmpty();
 
         ArgumentCaptor<TLlmCallLog> logCaptor = ArgumentCaptor.forClass(TLlmCallLog.class);
         verify(callLogMapper).insert(logCaptor.capture());
@@ -253,9 +266,9 @@ class RagServiceImplTest {
 
         AskResponse response = service.ask(new AskRequest("问题", null, null));
 
-        assertThat(response.tokenUsage().inputTokens()).isNull();
-        assertThat(response.tokenUsage().outputTokens()).isNull();
-        assertThat(response.tokenUsage().totalTokens()).isNull();
+        assertThat(response.getTokenUsage().getInputTokens()).isNull();
+        assertThat(response.getTokenUsage().getOutputTokens()).isNull();
+        assertThat(response.getTokenUsage().getTotalTokens()).isNull();
 
         ArgumentCaptor<TLlmCallLog> logCaptor = ArgumentCaptor.forClass(TLlmCallLog.class);
         verify(callLogMapper).insert(logCaptor.capture());
@@ -309,18 +322,18 @@ class RagServiceImplTest {
 
         QuestionLogResponse log = service.getQuestionLog(1L);
 
-        assertThat(log.questionId()).isEqualTo(1L);
-        assertThat(log.question()).isEqualTo("测试问题");
-        assertThat(log.answer()).isEqualTo("测试答案");
-        assertThat(log.model()).isEqualTo("deepseek4pro");
-        assertThat(log.prompt()).isEqualTo("完整 prompt 内容");
-        assertThat(log.tokenUsage().inputTokens()).isEqualTo(100L);
-        assertThat(log.tokenUsage().outputTokens()).isEqualTo(50L);
-        assertThat(log.tokenUsage().totalTokens()).isEqualTo(150L);
-        assertThat(log.createdAt()).isEqualTo(Instant.parse("2026-06-16T10:00:00Z"));
-        assertThat(log.retrievalResults()).hasSize(2);
-        assertThat(log.retrievalResults().get(0).score()).isEqualTo(0.95);
-        assertThat(log.retrievalResults().get(1).score()).isEqualTo(0.88);
+        assertThat(log.getQuestionId()).isEqualTo(1L);
+        assertThat(log.getQuestion()).isEqualTo("测试问题");
+        assertThat(log.getAnswer()).isEqualTo("测试答案");
+        assertThat(log.getModel()).isEqualTo("deepseek4pro");
+        assertThat(log.getPrompt()).isEqualTo("完整 prompt 内容");
+        assertThat(log.getTokenUsage().getInputTokens()).isEqualTo(100L);
+        assertThat(log.getTokenUsage().getOutputTokens()).isEqualTo(50L);
+        assertThat(log.getTokenUsage().getTotalTokens()).isEqualTo(150L);
+        assertThat(log.getCreatedAt()).isEqualTo(Instant.parse("2026-06-16T10:00:00Z"));
+        assertThat(log.getRetrievalResults()).hasSize(2);
+        assertThat(log.getRetrievalResults().get(0).getScore()).isEqualTo(0.95);
+        assertThat(log.getRetrievalResults().get(1).getScore()).isEqualTo(0.88);
     }
 
     @Test
