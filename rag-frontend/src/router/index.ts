@@ -13,6 +13,11 @@ const router = createRouter({
       name: 'documents',
       component: () => import('@/views/DocumentManageView.vue'),
     },
+    {
+      path: '/eval',
+      name: 'eval',
+      component: () => import('@/views/EvalView.vue'),
+    },
   ],
 })
 

@@ -10,6 +10,7 @@ const activeIndex = computed(() => route.path)
 const menuItems = [
   { path: '/', title: 'RAG 问答', icon: 'ChatDotRound' },
   { path: '/documents', title: '文档管理', icon: 'Document' },
+  { path: '/eval', title: '质量评估', icon: 'DataAnalysis' },
 ]
 </script>
 

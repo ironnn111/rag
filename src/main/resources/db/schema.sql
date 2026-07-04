@@ -57,3 +57,17 @@ CREATE TABLE IF NOT EXISTS llm_call_logs (
     created_at DATETIME(6) NOT NULL COMMENT '模型调用日志创建时间',
     UNIQUE KEY uk_llm_call_question_id (question_id)
 ) COMMENT='大模型调用日志表，保存 Prompt、答案和 token 用量';
+
+-- 评估分数表：保存 LLM-as-Judge 对问答质量的 faithfulness 和 relevancy 评估。
+CREATE TABLE IF NOT EXISTS eval_scores (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键 ID',
+    question_id BIGINT NOT NULL COMMENT '关联 rag_questions.id',
+    faithfulness_score INT NOT NULL COMMENT '忠实度评分 1-5，答案是否基于检索上下文',
+    faithfulness_reason TEXT NOT NULL COMMENT '忠实度评分理由',
+    relevancy_score INT NOT NULL COMMENT '相关性评分 1-5，答案是否切题',
+    relevancy_reason TEXT NOT NULL COMMENT '相关性评分理由',
+    eval_prompt LONGTEXT NOT NULL COMMENT '发送给 LLM 的完整评估 prompt',
+    created_at DATETIME(6) NOT NULL COMMENT '评估时间',
+    INDEX idx_eval_scores_question_id (question_id)
+) COMMENT='评估分数表，保存 LLM-as-Judge 对问答质量的 faithfulness 和 relevancy 评估';
+
