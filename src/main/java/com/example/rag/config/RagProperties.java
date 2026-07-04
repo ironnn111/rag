@@ -1,20 +1,17 @@
 package com.example.rag.config;
 
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-/**
- * RAG 业务参数。
- *
- * @param chunkSize 文档切块大小
- * @param chunkOverlap 相邻切块重叠字符数
- * @param defaultTopK 默认检索片段数量
- * @param defaultSimilarityThreshold 默认相似度阈值
- */
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 @ConfigurationProperties(prefix = "rag")
-public record RagProperties(
-        int chunkSize,
-        int chunkOverlap,
-        int defaultTopK,
-        double defaultSimilarityThreshold
-) {
+public class RagProperties {
+    private int chunkSize;
+    private int chunkOverlap;
+    private int defaultTopK;
+    private double defaultSimilarityThreshold;
 }
